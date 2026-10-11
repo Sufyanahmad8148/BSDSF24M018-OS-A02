@@ -1,10 +1,11 @@
 /*
-* Programming Assignment 02: lsv1.1.0
-* This is the source file of version 1.1.0 (adds -l long listing)
+* Programming Assignment 02: lsv1.2.0
+* This is the source file of version 1.2.0
+* Adds: -l long listing (v1.1.0), column display "down then across" (v1.2.0)
 * Usage:
-*       $ lsv1.1.0
-*       $ lsv1.1.0 -l
-*       $ lsv1.1.0 -l /home /etc
+*       $ lsv1.2.0
+*       $ lsv1.2.0 -l
+*       $ lsv1.2.0 /home /etc
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <pwd.h>
 #include <grp.h>
 #include <time.h>
@@ -22,6 +24,8 @@ extern int errno;
 
 void do_ls(const char *dir, int long_flag);
 void do_ls_long(const char *dir);
+void display_columns(char **names, int count, int maxlen);
+int get_terminal_width(void);
 void get_permissions(mode_t mode, char *str);
 const char *user_name(uid_t uid, char *buf);
 const char *group_name(gid_t gid, char *buf);
@@ -60,6 +64,41 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+/* Returns the terminal width, or 80 if it cannot be found */
+int get_terminal_width(void)
+{
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1 || w.ws_col == 0)
+        return 80;
+    return w.ws_col;
+}
+
+/* Prints names in columns, "down then across" */
+void display_columns(char **names, int count, int maxlen)
+{
+    if (count == 0)
+        return;
+
+    int width = get_terminal_width();
+    int col_width = maxlen + 2;          /* longest name + 2 spaces */
+    int cols = width / col_width;        /* how many columns fit */
+    if (cols < 1)
+        cols = 1;
+    int rows = (count + cols - 1) / cols; /* total rows, rounded up */
+
+    for (int r = 0; r < rows; r++)
+    {
+        for (int c = 0; c < cols; c++)
+        {
+            int idx = r + c * rows;      /* item that belongs here */
+            if (idx >= count)
+                break;
+            printf("%-*s", col_width, names[idx]);
+        }
+        printf("\n");
+    }
+}
+
 void do_ls(const char *dir, int long_flag)
 {
     if (long_flag)
@@ -75,12 +114,40 @@ void do_ls(const char *dir, int long_flag)
         fprintf(stderr, "Cannot open directory : %s\n", dir);
         return;
     }
+
+    char **names = NULL;   /* dynamic array of strings */
+    int count = 0;         /* how many names stored */
+    int capacity = 0;      /* how many names the array can hold */
+    int maxlen = 0;        /* longest name length */
+
     errno = 0;
     while ((entry = readdir(dp)) != NULL)
     {
         if (entry->d_name[0] == '.')
             continue;
-        printf("%s\n", entry->d_name);
+
+        if (count == capacity)
+        {
+            capacity = (capacity == 0) ? 16 : capacity * 2;
+            names = realloc(names, capacity * sizeof(char *));
+            if (names == NULL)
+            {
+                perror("realloc failed");
+                exit(1);
+            }
+        }
+
+        names[count] = strdup(entry->d_name);
+        if (names[count] == NULL)
+        {
+            perror("strdup failed");
+            exit(1);
+        }
+
+        int len = strlen(names[count]);
+        if (len > maxlen)
+            maxlen = len;
+        count++;
     }
 
     if (errno != 0)
@@ -89,6 +156,13 @@ void do_ls(const char *dir, int long_flag)
     }
 
     closedir(dp);
+
+    display_columns(names, count, maxlen);
+
+    /* free the memory */
+    for (int i = 0; i < count; i++)
+        free(names[i]);
+    free(names);
 }
 
 /* Converts st_mode into a string like "drwxr-xr-x" */
