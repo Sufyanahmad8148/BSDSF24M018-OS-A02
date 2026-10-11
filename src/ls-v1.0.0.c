@@ -1,11 +1,12 @@
 /*
-* Programming Assignment 02: lsv1.2.0
-* This is the source file of version 1.2.0
-* Adds: -l long listing (v1.1.0), column display "down then across" (v1.2.0)
+* Programming Assignment 02: lsv1.3.0
+* This is the source file of version 1.3.0
+* Adds: -l long listing (v1.1.0), column display (v1.2.0), -x horizontal (v1.3.0)
 * Usage:
-*       $ lsv1.2.0
-*       $ lsv1.2.0 -l
-*       $ lsv1.2.0 /home /etc
+*       $ lsv1.3.0
+*       $ lsv1.3.0 -l
+*       $ lsv1.3.0 -x
+*       $ lsv1.3.0 /home /etc
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,9 +23,13 @@
 
 extern int errno;
 
-void do_ls(const char *dir, int long_flag);
-void do_ls_long(const char *dir);
+/* the three display modes */
+enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL };
+
+void do_ls(const char *dir, int mode);
+void do_ls_long(const char *dir, char **names, int count);
 void display_columns(char **names, int count, int maxlen);
+void display_horizontal(char **names, int count, int maxlen);
 int get_terminal_width(void);
 void get_permissions(mode_t mode, char *str);
 const char *user_name(uid_t uid, char *buf);
@@ -33,31 +38,34 @@ const char *group_name(gid_t gid, char *buf);
 int main(int argc, char *argv[])
 {
     int opt;
-    int long_flag = 0;
+    int mode = MODE_DEFAULT;
 
-    while ((opt = getopt(argc, argv, "l")) != -1)
+    while ((opt = getopt(argc, argv, "lx")) != -1)
     {
         switch (opt)
         {
         case 'l':
-            long_flag = 1;
+            mode = MODE_LONG;
+            break;
+        case 'x':
+            mode = MODE_HORIZONTAL;
             break;
         default:
-            fprintf(stderr, "Usage: %s [-l] [directory...]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-l | -x] [directory...]\n", argv[0]);
             exit(1);
         }
     }
 
     if (optind == argc)
     {
-        do_ls(".", long_flag);
+        do_ls(".", mode);
     }
     else
     {
         for (int i = optind; i < argc; i++)
         {
             printf("Directory listing of %s : \n", argv[i]);
-            do_ls(argv[i], long_flag);
+            do_ls(argv[i], mode);
             puts("");
         }
     }
@@ -99,14 +107,31 @@ void display_columns(char **names, int count, int maxlen)
     }
 }
 
-void do_ls(const char *dir, int long_flag)
+/* Prints names left to right, wrapping when the line is full */
+void display_horizontal(char **names, int count, int maxlen)
 {
-    if (long_flag)
-    {
-        do_ls_long(dir);
+    if (count == 0)
         return;
-    }
 
+    int width = get_terminal_width();
+    int col_width = maxlen + 2;
+    int pos = 0;                         /* current position on the line */
+
+    for (int i = 0; i < count; i++)
+    {
+        if (pos + col_width > width && pos > 0)
+        {
+            printf("\n");                /* line is full, start a new one */
+            pos = 0;
+        }
+        printf("%-*s", col_width, names[i]);
+        pos += col_width;
+    }
+    printf("\n");
+}
+
+void do_ls(const char *dir, int mode)
+{
     struct dirent *entry;
     DIR *dp = opendir(dir);
     if (dp == NULL)
@@ -157,7 +182,13 @@ void do_ls(const char *dir, int long_flag)
 
     closedir(dp);
 
-    display_columns(names, count, maxlen);
+    /* check the display mode and call the right function */
+    if (mode == MODE_LONG)
+        do_ls_long(dir, names, count);
+    else if (mode == MODE_HORIZONTAL)
+        display_horizontal(names, count, maxlen);
+    else
+        display_columns(names, count, maxlen);
 
     /* free the memory */
     for (int i = 0; i < count; i++)
@@ -223,9 +254,9 @@ const char *group_name(gid_t gid, char *buf)
     return buf;
 }
 
-void do_ls_long(const char *dir)
+/* Long listing: now works on the array of names */
+void do_ls_long(const char *dir, char **names, int count)
 {
-    struct dirent *entry;
     struct stat st;
     char path[1024];
     char perms[11];
@@ -234,19 +265,10 @@ void do_ls_long(const char *dir)
     int w_link = 0, w_user = 0, w_group = 0, w_size = 0;
     int len;
 
-    DIR *dp = opendir(dir);
-    if (dp == NULL)
+    /* LOOP 1: find the widest value in each column and the total */
+    for (int i = 0; i < count; i++)
     {
-        fprintf(stderr, "Cannot open directory : %s\n", dir);
-        return;
-    }
-
-    /* PASS 1: find the widest value in each column and the total */
-    while ((entry = readdir(dp)) != NULL)
-    {
-        if (entry->d_name[0] == '.')
-            continue;
-        snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+        snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
         if (lstat(path, &st) == -1)
         {
             perror(path);
@@ -269,13 +291,10 @@ void do_ls_long(const char *dir)
 
     printf("total %ld\n", total / 2);
 
-    /* PASS 2: go back to the start and print every line */
-    rewinddir(dp);
-    while ((entry = readdir(dp)) != NULL)
+    /* LOOP 2: print every line */
+    for (int i = 0; i < count; i++)
     {
-        if (entry->d_name[0] == '.')
-            continue;
-        snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+        snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
         if (lstat(path, &st) == -1)
             continue;
 
@@ -288,8 +307,6 @@ void do_ls_long(const char *dir)
                w_group, group_name(st.st_gid, gbuf),
                w_size, (long)st.st_size,
                ctime(&st.st_mtime) + 4,
-               entry->d_name);
+               names[i]);
     }
-
-    closedir(dp);
 }

@@ -19,3 +19,13 @@ First we read all the filenames into an array and find the longest one. The colu
 **Q2. What is the purpose of ioctl in this context? What are the limitations of a fixed 80-column width?**
 
 `ioctl` with the `TIOCGWINSZ` request asks the terminal driver for the current window size and fills a `struct winsize`. We read `ws_col` from it to know how many characters fit on one line, so the number of columns can be calculated for the actual window. If we used only a fixed width of 80, the output would not adapt. In a wide terminal, much of the screen would be unused and there would be more rows than needed. In a terminal narrower than 80 columns, the lines would be longer than the window and the terminal would wrap them, which breaks the column alignment and makes the output hard to read. It would also ignore the user resizing the window.
+
+## Feature-4: Horizontal Column Display, -x (v1.3.0)
+
+**Q1. Compare the complexity of "down then across" and "across" printing. Which needs more pre-calculation, and why?**
+
+The "across" (horizontal) logic is simpler. It needs only the terminal width and the column width (longest name plus 2). It then loops once over the array, prints each name, adds the column width to a position counter, and starts a new line when the next name would not fit. It never needs to know the number of rows or columns in advance. The "down then across" (vertical) logic needs more pre-calculation. Before printing anything it must work out the number of columns (terminal width divided by column width) and then the number of rows (total files divided by columns, rounded up). It also needs two nested loops and the index formula `r + c * rows` to pick the right name for each position. So the vertical layout requires more pre-calculation, because the position of each name depends on the total number of rows, which is only known after all names have been counted.
+
+**Q2. Describe the strategy used to manage the display modes. How does the program decide which function to call?**
+
+I used an `enum` with three values: `MODE_DEFAULT`, `MODE_LONG` and `MODE_HORIZONTAL`. In `main`, the `getopt` loop sets a variable `mode` when it finds `-l` or `-x`. If both are given, the last one wins. `main` passes `mode` to `do_ls`. `do_ls` first reads all the filenames into a dynamic array, and then checks `mode`: if it is `MODE_LONG` it calls `do_ls_long`, if it is `MODE_HORIZONTAL` it calls `display_horizontal`, and otherwise it calls `display_columns`, the default "down then across" display. Because the reading code is shared and only the printing function changes, each new mode needs only one new function and one new `if` branch.
