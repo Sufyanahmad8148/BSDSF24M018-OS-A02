@@ -1,12 +1,13 @@
 /*
-* Programming Assignment 02: lsv1.3.0
-* This is the source file of version 1.3.0
-* Adds: -l long listing (v1.1.0), column display (v1.2.0), -x horizontal (v1.3.0)
+* Programming Assignment 02: lsv1.4.0
+* This is the source file of version 1.4.0
+* Adds: -l long listing (v1.1.0), column display (v1.2.0),
+*       -x horizontal (v1.3.0), alphabetical sort (v1.4.0)
 * Usage:
-*       $ lsv1.3.0
-*       $ lsv1.3.0 -l
-*       $ lsv1.3.0 -x
-*       $ lsv1.3.0 /home /etc
+*       $ lsv1.4.0
+*       $ lsv1.4.0 -l
+*       $ lsv1.4.0 -x
+*       $ lsv1.4.0 /home /etc
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,7 @@ void do_ls(const char *dir, int mode);
 void do_ls_long(const char *dir, char **names, int count);
 void display_columns(char **names, int count, int maxlen);
 void display_horizontal(char **names, int count, int maxlen);
+int compare_names(const void *a, const void *b);
 int get_terminal_width(void);
 void get_permissions(mode_t mode, char *str);
 const char *user_name(uid_t uid, char *buf);
@@ -70,6 +72,14 @@ int main(int argc, char *argv[])
         }
     }
     return 0;
+}
+
+/* Comparison function for qsort: compares two filenames */
+int compare_names(const void *a, const void *b)
+{
+    const char *s1 = *(char **)a;   /* cast to char ** then take the string */
+    const char *s2 = *(char **)b;
+    return strcmp(s1, s2);
 }
 
 /* Returns the terminal width, or 80 if it cannot be found */
@@ -182,6 +192,10 @@ void do_ls(const char *dir, int mode)
 
     closedir(dp);
 
+    /* sort the names after reading and before any display function */
+    if (count > 1)
+        qsort(names, count, sizeof(char *), compare_names);
+
     /* check the display mode and call the right function */
     if (mode == MODE_LONG)
         do_ls_long(dir, names, count);
@@ -254,7 +268,7 @@ const char *group_name(gid_t gid, char *buf)
     return buf;
 }
 
-/* Long listing: now works on the array of names */
+/* Long listing: works on the array of names */
 void do_ls_long(const char *dir, char **names, int count)
 {
     struct stat st;
