@@ -1,13 +1,14 @@
 /*
-* Programming Assignment 02: lsv1.4.0
-* This is the source file of version 1.4.0
+* Programming Assignment 02: lsv1.5.0
+* This is the source file of version 1.5.0
 * Adds: -l long listing (v1.1.0), column display (v1.2.0),
-*       -x horizontal (v1.3.0), alphabetical sort (v1.4.0)
+*       -x horizontal (v1.3.0), alphabetical sort (v1.4.0),
+*       colorized output (v1.5.0)
 * Usage:
-*       $ lsv1.4.0
-*       $ lsv1.4.0 -l
-*       $ lsv1.4.0 -x
-*       $ lsv1.4.0 /home /etc
+*       $ lsv1.5.0
+*       $ lsv1.5.0 -l
+*       $ lsv1.5.0 -x
+*       $ lsv1.5.0 /home /etc
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,14 @@
 #include <grp.h>
 #include <time.h>
 
+/* ANSI color codes */
+#define COLOR_RESET   "\033[0m"
+#define COLOR_BLUE    "\033[0;34m"
+#define COLOR_GREEN   "\033[0;32m"
+#define COLOR_RED     "\033[0;31m"
+#define COLOR_PINK    "\033[1;35m"
+#define COLOR_REVERSE "\033[7m"
+
 extern int errno;
 
 /* the three display modes */
@@ -29,8 +38,10 @@ enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL };
 
 void do_ls(const char *dir, int mode);
 void do_ls_long(const char *dir, char **names, int count);
-void display_columns(char **names, int count, int maxlen);
-void display_horizontal(char **names, int count, int maxlen);
+void display_columns(const char *dir, char **names, int count, int maxlen);
+void display_horizontal(const char *dir, char **names, int count, int maxlen);
+void print_colored(const char *dir, const char *name);
+int ends_with(const char *name, const char *ext);
 int compare_names(const void *a, const void *b);
 int get_terminal_width(void);
 void get_permissions(mode_t mode, char *str);
@@ -82,6 +93,45 @@ int compare_names(const void *a, const void *b)
     return strcmp(s1, s2);
 }
 
+/* Returns 1 if name ends with ext (for example ".tar"), else 0 */
+int ends_with(const char *name, const char *ext)
+{
+    int nlen = strlen(name);
+    int elen = strlen(ext);
+    if (nlen < elen)
+        return 0;
+    return strcmp(name + nlen - elen, ext) == 0;
+}
+
+/* Prints a filename in the color that matches its file type */
+void print_colored(const char *dir, const char *name)
+{
+    struct stat st;
+    char path[1024];
+    const char *color = "";
+
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+
+    if (lstat(path, &st) == 0)
+    {
+        mode_t m = st.st_mode;
+
+        if (S_ISLNK(m))
+            color = COLOR_PINK;                          /* symbolic link */
+        else if (S_ISDIR(m))
+            color = COLOR_BLUE;                          /* directory */
+        else if (S_ISCHR(m) || S_ISBLK(m) || S_ISFIFO(m) || S_ISSOCK(m))
+            color = COLOR_REVERSE;                       /* special file */
+        else if (ends_with(name, ".tar") || ends_with(name, ".gz") ||
+                 ends_with(name, ".zip"))
+            color = COLOR_RED;                           /* tarball */
+        else if (m & (S_IXUSR | S_IXGRP | S_IXOTH))
+            color = COLOR_GREEN;                         /* executable */
+    }
+
+    printf("%s%s%s", color, name, COLOR_RESET);
+}
+
 /* Returns the terminal width, or 80 if it cannot be found */
 int get_terminal_width(void)
 {
@@ -92,7 +142,7 @@ int get_terminal_width(void)
 }
 
 /* Prints names in columns, "down then across" */
-void display_columns(char **names, int count, int maxlen)
+void display_columns(const char *dir, char **names, int count, int maxlen)
 {
     if (count == 0)
         return;
@@ -111,14 +161,16 @@ void display_columns(char **names, int count, int maxlen)
             int idx = r + c * rows;      /* item that belongs here */
             if (idx >= count)
                 break;
-            printf("%-*s", col_width, names[idx]);
+            print_colored(dir, names[idx]);
+            /* pad with spaces by hand, because color codes break %-*s */
+            printf("%*s", col_width - (int)strlen(names[idx]), "");
         }
         printf("\n");
     }
 }
 
 /* Prints names left to right, wrapping when the line is full */
-void display_horizontal(char **names, int count, int maxlen)
+void display_horizontal(const char *dir, char **names, int count, int maxlen)
 {
     if (count == 0)
         return;
@@ -134,7 +186,8 @@ void display_horizontal(char **names, int count, int maxlen)
             printf("\n");                /* line is full, start a new one */
             pos = 0;
         }
-        printf("%-*s", col_width, names[i]);
+        print_colored(dir, names[i]);
+        printf("%*s", col_width - (int)strlen(names[i]), "");
         pos += col_width;
     }
     printf("\n");
@@ -200,9 +253,9 @@ void do_ls(const char *dir, int mode)
     if (mode == MODE_LONG)
         do_ls_long(dir, names, count);
     else if (mode == MODE_HORIZONTAL)
-        display_horizontal(names, count, maxlen);
+        display_horizontal(dir, names, count, maxlen);
     else
-        display_columns(names, count, maxlen);
+        display_columns(dir, names, count, maxlen);
 
     /* free the memory */
     for (int i = 0; i < count; i++)
@@ -314,13 +367,14 @@ void do_ls_long(const char *dir, char **names, int count)
 
         get_permissions(st.st_mode, perms);
 
-        printf("%s %*ld %-*s %-*s %*ld %.12s %s\n",
+        printf("%s %*ld %-*s %-*s %*ld %.12s ",
                perms,
                w_link, (long)st.st_nlink,
                w_user, user_name(st.st_uid, ubuf),
                w_group, group_name(st.st_gid, gbuf),
                w_size, (long)st.st_size,
-               ctime(&st.st_mtime) + 4,
-               names[i]);
+               ctime(&st.st_mtime) + 4);
+        print_colored(dir, names[i]);
+        printf("\n");
     }
 }
