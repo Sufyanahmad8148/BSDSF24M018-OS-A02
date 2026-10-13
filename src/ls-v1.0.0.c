@@ -1,14 +1,15 @@
 /*
-* Programming Assignment 02: lsv1.5.0
-* This is the source file of version 1.5.0
+* Programming Assignment 02: lsv1.6.0
+* This is the source file of version 1.6.0
 * Adds: -l long listing (v1.1.0), column display (v1.2.0),
 *       -x horizontal (v1.3.0), alphabetical sort (v1.4.0),
-*       colorized output (v1.5.0)
+*       colorized output (v1.5.0), -R recursive listing (v1.6.0)
 * Usage:
-*       $ lsv1.5.0
-*       $ lsv1.5.0 -l
-*       $ lsv1.5.0 -x
-*       $ lsv1.5.0 /home /etc
+*       $ lsv1.6.0
+*       $ lsv1.6.0 -l
+*       $ lsv1.6.0 -x
+*       $ lsv1.6.0 -R
+*       $ lsv1.6.0 -lR /home /etc
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +37,7 @@ extern int errno;
 /* the three display modes */
 enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL };
 
-void do_ls(const char *dir, int mode);
+void do_ls(const char *dir, int mode, int recursive_flag);
 void do_ls_long(const char *dir, char **names, int count);
 void display_columns(const char *dir, char **names, int count, int maxlen);
 void display_horizontal(const char *dir, char **names, int count, int maxlen);
@@ -52,8 +53,9 @@ int main(int argc, char *argv[])
 {
     int opt;
     int mode = MODE_DEFAULT;
+    int recursive_flag = 0;
 
-    while ((opt = getopt(argc, argv, "lx")) != -1)
+    while ((opt = getopt(argc, argv, "lxR")) != -1)
     {
         switch (opt)
         {
@@ -63,22 +65,27 @@ int main(int argc, char *argv[])
         case 'x':
             mode = MODE_HORIZONTAL;
             break;
+        case 'R':
+            recursive_flag = 1;
+            break;
         default:
-            fprintf(stderr, "Usage: %s [-l | -x] [directory...]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-l | -x] [-R] [directory...]\n", argv[0]);
             exit(1);
         }
     }
 
     if (optind == argc)
     {
-        do_ls(".", mode);
+        do_ls(".", mode, recursive_flag);
     }
     else
     {
         for (int i = optind; i < argc; i++)
         {
-            printf("Directory listing of %s : \n", argv[i]);
-            do_ls(argv[i], mode);
+            /* with -R, do_ls prints its own "dirname:" header */
+            if (!recursive_flag)
+                printf("Directory listing of %s : \n", argv[i]);
+            do_ls(argv[i], mode, recursive_flag);
             puts("");
         }
     }
@@ -193,7 +200,7 @@ void display_horizontal(const char *dir, char **names, int count, int maxlen)
     printf("\n");
 }
 
-void do_ls(const char *dir, int mode)
+void do_ls(const char *dir, int mode, int recursive_flag)
 {
     struct dirent *entry;
     DIR *dp = opendir(dir);
@@ -202,6 +209,10 @@ void do_ls(const char *dir, int mode)
         fprintf(stderr, "Cannot open directory : %s\n", dir);
         return;
     }
+
+    /* with -R, print the name of the directory we are about to list */
+    if (recursive_flag)
+        printf("%s:\n", dir);
 
     char **names = NULL;   /* dynamic array of strings */
     int count = 0;         /* how many names stored */
@@ -256,6 +267,28 @@ void do_ls(const char *dir, int mode)
         display_horizontal(dir, names, count, maxlen);
     else
         display_columns(dir, names, count, maxlen);
+
+    /* recursion: visit every sub-directory of this directory */
+    if (recursive_flag)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            struct stat st;
+            char path[1024];
+
+            /* build the full path: dir/name */
+            snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+
+            if (lstat(path, &st) == -1)
+                continue;
+
+            if (S_ISDIR(st.st_mode))
+            {
+                printf("\n");
+                do_ls(path, mode, recursive_flag);   /* recursive call */
+            }
+        }
+    }
 
     /* free the memory */
     for (int i = 0; i < count; i++)
